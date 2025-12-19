@@ -14,9 +14,8 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture, isProcessing }) => {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
 
   const startCamera = useCallback(async () => {
-    // 检查是否在安全上下文中（HTTPS），否则无法使用摄像头
-    if (!window.isSecureContext) {
-      setError("由于浏览器安全限制，摄像头识别功能仅在 HTTPS 环境下可用。请检查您的连接。");
+    if (!window.isSecureContext && window.location.hostname !== 'localhost') {
+      setError("识别功能需要 HTTPS 安全连接。请检查您的域名配置。");
       return;
     }
 
@@ -24,9 +23,9 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture, isProcessing }) => {
     try {
       const constraints = {
         video: { 
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1024 },
-          height: { ideal: 1024 }
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
         },
         audio: false 
       };
@@ -35,15 +34,22 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture, isProcessing }) => {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onplaying = () => setStreamActive(true);
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play().then(() => {
+            setStreamActive(true);
+          }).catch(e => {
+            console.error("Video play failed:", e);
+            setError("点击屏幕以激活摄像头。");
+          });
+        };
       }
       setError(null);
     } catch (err: any) {
-      console.error("Camera access error:", err);
+      console.error("Camera Error:", err);
       if (err.name === 'NotAllowedError') {
-        setError("摄像头访问被拒绝。请在浏览器设置中允许此页面访问摄像头。");
+        setError("请在浏览器设置中开启摄像头权限。");
       } else {
-        setError("无法初始化摄像头。请确保没有其他应用正在占用它。");
+        setError("无法启动摄像头，请检查硬件是否正常。");
       }
     }
   }, []);
@@ -54,90 +60,72 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture, isProcessing }) => {
     }
     return () => {
       if (videoRef.current?.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
+        (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       }
     };
   }, [startCamera, isProcessing]);
 
   const capturePhoto = () => {
-    if (isProcessing) return;
+    if (isProcessing || !streamActive || !videoRef.current || !canvasRef.current) return;
 
-    if (videoRef.current && canvasRef.current && streamActive) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    
+    // 关键优化：确保视频已有真实画面像素
+    if (video.readyState < 2 || video.videoWidth === 0) {
+      console.warn("Video not ready for capture");
+      return;
+    }
+
+    setIsFlashing(true);
+    setTimeout(() => setIsFlashing(false), 150);
+
+    // 设置画布尺寸与视频源一致
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      // 保证截图质量
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      // 检查视频是否真的有画面数据
-      if (video.readyState < 2) return;
-
-      const width = video.videoWidth;
-      const height = video.videoHeight;
-
-      setIsFlashing(true);
-      setTimeout(() => setIsFlashing(false), 150);
-
-      canvas.width = width;
-      canvas.height = height;
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      setCapturedImage(dataUrl);
       
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, width, height);
-        // 使用 0.8 质量，既能保证识别度，又能减小体积提升速度
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-        setCapturedImage(dataUrl);
-        
-        const base64 = dataUrl.split(',')[1];
-        if (base64) {
-          onCapture(base64);
-        }
-        
-        // 捕获后暂时停止视频以节省资源
-        if (video.srcObject) {
-          const stream = video.srcObject as MediaStream;
-          stream.getTracks().forEach(track => track.stop());
-          setStreamActive(false);
-        }
+      const base64 = dataUrl.split(',')[1];
+      if (base64) {
+        onCapture(base64);
+      }
+      
+      // 停止视频流
+      if (video.srcObject) {
+        (video.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+        setStreamActive(false);
       }
     }
   };
 
   return (
-    <div className="relative w-full aspect-[4/3] md:aspect-video rounded-[2rem] md:rounded-[3rem] overflow-hidden bg-slate-900 shadow-2xl">
+    <div className="relative w-full aspect-[4/3] md:aspect-video rounded-[2.5rem] overflow-hidden bg-slate-950 shadow-2xl ring-1 ring-white/10">
       {error ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-10 text-center space-y-6 z-50">
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-10 text-center space-y-6 z-50 bg-slate-900/90 backdrop-blur-md">
           <div className="w-20 h-20 bg-rose-500/10 rounded-full flex items-center justify-center border border-rose-500/30">
             <svg className="w-10 h-10 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
           </div>
-          <div className="space-y-2">
-            <p className="text-lg font-bold">无法使用摄像头</p>
-            <p className="text-sm opacity-60 max-w-sm mx-auto">{error}</p>
-          </div>
-          <button 
-            onClick={() => { setError(null); startCamera(); }}
-            className="px-8 py-3 bg-white text-slate-900 rounded-2xl font-bold hover:scale-105 active:scale-95 transition-all"
-          >
-            重试连接
-          </button>
+          <p className="text-sm font-medium opacity-90 max-w-xs">{error}</p>
+          <button onClick={() => { setError(null); startCamera(); }} className="px-8 py-3 bg-white text-slate-900 rounded-2xl font-bold active:scale-95 transition-all">重试</button>
         </div>
       ) : (
         <>
           {!capturedImage && (
-            <video 
-              ref={videoRef} 
-              autoPlay 
-              playsInline 
-              muted 
-              className={`w-full h-full object-cover transition-opacity duration-500 ${streamActive ? 'opacity-100' : 'opacity-0'}`} 
-            />
+            <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover transition-opacity duration-700 ${streamActive ? 'opacity-100' : 'opacity-0'}`} />
           )}
 
           {capturedImage && (
-            <div className="absolute inset-0 w-full h-full">
-              <img 
-                src={capturedImage} 
-                className={`w-full h-full object-cover transition-all duration-1000 ${isProcessing ? 'blur-md scale-105' : ''}`}
-                alt="Captured"
-              />
+            <div className="absolute inset-0">
+              <img src={capturedImage} className={`w-full h-full object-cover transition-all duration-1000 ${isProcessing ? 'blur-xl scale-110 opacity-50' : ''}`} alt="Captured" />
             </div>
           )}
 
@@ -145,44 +133,48 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture, isProcessing }) => {
           <div className={`absolute inset-0 bg-white z-50 pointer-events-none transition-opacity duration-150 ${isFlashing ? 'opacity-100' : 'opacity-0'}`} />
 
           {isProcessing && (
-            <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/30 backdrop-blur-md">
+            <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xl">
               <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                <div className="w-full h-[3px] bg-gradient-to-r from-transparent via-emerald-400 to-transparent animate-scan top-0 absolute opacity-80"></div>
+                <div className="w-full h-[3px] bg-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.8)] animate-scan top-0 absolute"></div>
               </div>
-              <div className="relative w-24 h-24 mb-6">
-                <div className="absolute inset-0 border-4 border-emerald-500/20 rounded-full"></div>
-                <div className="absolute inset-0 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+              <div className="relative w-20 h-20 mb-6">
+                <div className="absolute inset-0 border-2 border-emerald-500/20 rounded-full"></div>
+                <div className="absolute inset-0 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
               </div>
-              <p className="text-white font-bold text-lg tracking-widest uppercase animate-pulse">
-                智能识别中
-              </p>
+              <p className="text-white font-bold text-sm tracking-[0.3em] uppercase animate-pulse">AI 深度分析中...</p>
             </div>
           )}
 
           {!isProcessing && streamActive && !capturedImage && (
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-8">
-               <div className="w-full h-full border-2 border-white/20 rounded-[2rem] relative">
-                  <div className="absolute -top-1 -left-1 w-12 h-12 border-t-4 border-l-4 border-emerald-500 rounded-tl-3xl"></div>
-                  <div className="absolute -top-1 -right-1 w-12 h-12 border-t-4 border-r-4 border-emerald-500 rounded-tr-3xl"></div>
-                  <div className="absolute -bottom-1 -left-1 w-12 h-12 border-b-4 border-l-4 border-emerald-500 rounded-bl-3xl"></div>
-                  <div className="absolute -bottom-1 -right-1 w-12 h-12 border-b-4 border-r-4 border-emerald-500 rounded-br-3xl"></div>
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-12">
+               <div className="w-full h-full border border-white/20 rounded-[2rem] relative">
+                  <div className="absolute -top-1 -left-1 w-12 h-12 border-t-4 border-l-4 border-emerald-500/80 rounded-tl-3xl"></div>
+                  <div className="absolute -top-1 -right-1 w-12 h-12 border-t-4 border-r-4 border-emerald-500/80 rounded-tr-3xl"></div>
+                  <div className="absolute -bottom-1 -left-1 w-12 h-12 border-b-4 border-l-4 border-emerald-500/80 rounded-bl-3xl"></div>
+                  <div className="absolute -bottom-1 -right-1 w-12 h-12 border-b-4 border-r-4 border-emerald-500/80 rounded-br-3xl"></div>
                </div>
             </div>
           )}
 
           {!isProcessing && !capturedImage && (
             <div className="absolute bottom-10 inset-x-0 flex justify-center z-30">
-              <button
-                onClick={capturePhoto}
-                disabled={!streamActive}
-                className="group relative w-20 h-20 flex items-center justify-center transition-all active:scale-90"
+              <button 
+                onClick={capturePhoto} 
+                disabled={!streamActive} 
+                className="group relative flex flex-col items-center gap-2 transition-all active:scale-95"
               >
-                <div className="absolute inset-0 bg-white/20 backdrop-blur-md rounded-full border-2 border-white/50 group-hover:scale-110 transition-transform"></div>
-                <div className="w-14 h-14 bg-emerald-500 rounded-full shadow-lg flex items-center justify-center z-10">
-                   <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                   </svg>
+                <div className="relative w-24 h-24 flex items-center justify-center">
+                  {/* 外圈 */}
+                  <div className="absolute inset-0 bg-white/10 backdrop-blur-md rounded-full border-4 border-white/40 group-hover:scale-105 group-hover:border-white/60 transition-all"></div>
+                  {/* 相机主体 Logo */}
+                  <div className="w-16 h-16 bg-emerald-700 rounded-full shadow-2xl flex items-center justify-center z-10 group-hover:bg-emerald-800 transition-colors">
+                     <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                        <circle cx="12" cy="13" r="3" strokeWidth={2.5} />
+                     </svg>
+                  </div>
                 </div>
+                <span className="text-white text-[10px] font-bold tracking-[0.2em] uppercase opacity-60 group-hover:opacity-100">点击识别</span>
               </button>
             </div>
           )}
@@ -190,10 +182,10 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture, isProcessing }) => {
       )}
       <style>{`
         @keyframes scan {
-          0% { top: -5%; opacity: 0; }
+          0% { top: 0%; opacity: 0; }
           10% { opacity: 1; }
           90% { opacity: 1; }
-          100% { top: 105%; opacity: 0; }
+          100% { top: 100%; opacity: 0; }
         }
         .animate-scan { animation: scan 3s ease-in-out infinite; }
       `}</style>
