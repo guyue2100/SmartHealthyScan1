@@ -14,9 +14,9 @@ const App: React.FC = () => {
     setIsProcessing(true);
     setError(null);
     
-    // 增加超时控制，移动端网络不稳定时提供反馈
+    // 为复杂的视觉任务提供充足的时间
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("网络响应较慢，请稍后重试或更换网络。")), 35000)
+      setTimeout(() => reject(new Error("AI 响应超时，可能是网络环境不稳定或图片上传受阻。")), 45000)
     );
 
     try {
@@ -27,9 +27,12 @@ const App: React.FC = () => {
       
       setResult(data);
     } catch (err: any) {
-      console.error("Analysis process error:", err);
-      let msg = err.message || "未知错误";
-      if (msg.includes("API_KEY")) msg = "环境配置错误：请检查部署平台的 API_KEY 设置。";
+      console.error("App Analysis Error:", err);
+      let msg = err.message || "由于系统繁忙，无法完成识别。";
+      // 不区分大小写的 API KEY 校验
+      if (/api[_\s]?key/i.test(msg)) {
+        msg = "环境配置错误：请检查部署平台的 API_KEY 设置是否正确注入。";
+      }
       setError(msg);
     } finally {
       setIsProcessing(false);
@@ -60,7 +63,6 @@ const App: React.FC = () => {
             <div className="max-w-4xl mx-auto relative">
               <CameraView onCapture={handleCapture} isProcessing={isProcessing} />
               
-              {/* 视觉装饰 */}
               <div className="absolute -z-10 -top-12 -left-12 w-64 h-64 bg-emerald-100/40 rounded-full blur-[80px]"></div>
               <div className="absolute -z-10 -bottom-12 -right-12 w-64 h-64 bg-teal-100/40 rounded-full blur-[80px]"></div>
             </div>

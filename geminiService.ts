@@ -2,27 +2,14 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { AnalysisResponse } from "./types";
 
 export const analyzeIngredientsAndGetRecipes = async (base64Image: string): Promise<AnalysisResponse> => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    throw new Error("API Key 未配置，请联系管理员。");
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
+  // 根据开发规范，直接从环境获取并初始化
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
   const model = "gemini-3-flash-preview";
   
-  const systemInstruction = `
-    你是一个极其专业的视觉识别 AI 营养师。
-    
-    任务：
-    1. 识别图片中的食材（蔬菜、肉类、海鲜等）。
-    2. 提供核心营养价值和每100g预估热量。
-    3. 推荐3个极简健康食谱。
-    
-    要求：
-    - 必须严格返回符合 JSON Schema 的数据。
-    - 不要包含任何 Markdown 标签（如 \`\`\`json）。
-    - 描述简练，语言为中文。
-  `;
+  const systemInstruction = `你是一位顶级的视觉营养专家。
+请识别图片中的食材，并以 JSON 格式提供详细的营养分析及3个极简健康食谱。
+确保返回的 JSON 结构严谨，不要包含 Markdown 代码块标记，直接输出 JSON 字符串。
+食材信息要具体，食谱步骤要易于操作。`;
 
   const responseSchema = {
     type: Type.OBJECT,
@@ -32,10 +19,10 @@ export const analyzeIngredientsAndGetRecipes = async (base64Image: string): Prom
         items: {
           type: Type.OBJECT,
           properties: {
-            name: { type: Type.STRING },
-            info: { type: Type.STRING },
-            nutrition: { type: Type.STRING },
-            caloriesPer100g: { type: Type.INTEGER }
+            name: { type: Type.STRING, description: "食材名称" },
+            info: { type: Type.STRING, description: "食材百科信息" },
+            nutrition: { type: Type.STRING, description: "主要营养成分" },
+            caloriesPer100g: { type: Type.INTEGER, description: "每百克能量(kcal)" }
           },
           required: ["name", "info", "caloriesPer100g"]
         }
@@ -48,7 +35,7 @@ export const analyzeIngredientsAndGetRecipes = async (base64Image: string): Prom
             id: { type: Type.STRING },
             name: { type: Type.STRING },
             description: { type: Type.STRING },
-            difficulty: { type: Type.STRING },
+            difficulty: { type: Type.STRING, enum: ["简单", "中等", "困难"] },
             prepTime: { type: Type.STRING },
             allIngredients: { type: Type.ARRAY, items: { type: Type.STRING } },
             instructions: { type: Type.ARRAY, items: { type: Type.STRING } }
@@ -66,7 +53,7 @@ export const analyzeIngredientsAndGetRecipes = async (base64Image: string): Prom
       contents: { 
         parts: [
           { inlineData: { mimeType: "image/jpeg", data: base64Image } },
-          { text: "请分析这张照片中的食材并返回 JSON。" }
+          { text: "分析此图中的所有食材并生成健康方案。" }
         ] 
       },
       config: {
@@ -77,20 +64,22 @@ export const analyzeIngredientsAndGetRecipes = async (base64Image: string): Prom
     });
 
     const text = response.text;
-    if (!text) throw new Error("AI 未能识别到有效内容。");
+    if (!text) throw new Error("AI 服务未返回有效数据，请检查网络或重拍图片。");
     
-    // 过滤掉可能存在的 markdown 标签并解析
-    const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    // 鲁棒的 JSON 解析逻辑
+    const cleanedText = text.replace(/```json/gi, '').replace(/```/g, '').trim();
     const parsedData = JSON.parse(cleanedText);
     
     if (!parsedData.ingredients || parsedData.ingredients.length === 0) {
-      throw new Error("未能识别到清晰的食材，请调整角度重拍。");
+      throw new Error("未能从图中清晰识别到食材，请调整角度并确保光线充足。");
     }
 
     return parsedData as AnalysisResponse;
   } catch (error: any) {
-    console.error("Gemini Vision Error:", error);
-    if (error instanceof SyntaxError) throw new Error("识别结果解析失败，请重试。");
+    console.error("Gemini API Error Detail:", error);
+    if (error.message?.includes("API_KEY")) {
+      throw new Error("环境配置错误：API 密钥无效或未正确配置。");
+    }
     throw error;
   }
 };
