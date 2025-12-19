@@ -1,0 +1,7 @@
+{
+  "name": "SmartHealthyScan - 智能健康食材识别",
+  "description": "一个智能食材识别与食谱推荐工具。通过拍照识别蔬菜、肉类、鱼类等食材，为您提供科学的营养信息及定制化的健康食谱。",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
