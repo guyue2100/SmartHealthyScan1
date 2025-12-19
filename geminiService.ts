@@ -2,23 +2,26 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { AnalysisResponse } from "./types";
 
 export const analyzeIngredientsAndGetRecipes = async (base64Image: string): Promise<AnalysisResponse> => {
-  // 实时实例化以使用最新环境中的 API KEY
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    throw new Error("API Key 未配置，请联系管理员。");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
   const model = "gemini-3-flash-preview";
   
   const systemInstruction = `
-    你是一个极其高效的AI营养师。
-    目标：瞬时分析食材并返回最精简的JSON。
+    你是一个极其专业的视觉识别 AI 营养师。
     
     任务：
-    1. 识别图片食材。
-    2. 提供核心价值和100g热量。
-    3. 推荐 3 个极简健康食谱。
+    1. 识别图片中的食材（蔬菜、肉类、海鲜等）。
+    2. 提供核心营养价值和每100g预估热量。
+    3. 推荐3个极简健康食谱。
     
-    规则：
-    - 响应必须是纯JSON，严禁额外文字。
-    - 文本描述尽量简短（不超过20字）。
-    - 语言：中文。
+    要求：
+    - 必须严格返回符合 JSON Schema 的数据。
+    - 不要包含任何 Markdown 标签（如 \`\`\`json）。
+    - 描述简练，语言为中文。
   `;
 
   const responseSchema = {
@@ -57,21 +60,15 @@ export const analyzeIngredientsAndGetRecipes = async (base64Image: string): Prom
     required: ["ingredients", "recipes"]
   };
 
-  const imagePart = {
-    inlineData: {
-      mimeType: "image/jpeg",
-      data: base64Image
-    }
-  };
-
-  const textPart = {
-    text: "识别并给出3个食谱，直接返回JSON格式。"
-  };
-
   try {
     const response = await ai.models.generateContent({
       model,
-      contents: { parts: [imagePart, textPart] },
+      contents: { 
+        parts: [
+          { inlineData: { mimeType: "image/jpeg", data: base64Image } },
+          { text: "请分析这张照片中的食材并返回 JSON。" }
+        ] 
+      },
       config: {
         systemInstruction,
         responseMimeType: "application/json",
@@ -80,11 +77,20 @@ export const analyzeIngredientsAndGetRecipes = async (base64Image: string): Prom
     });
 
     const text = response.text;
-    if (!text) throw new Error("识别结果为空");
+    if (!text) throw new Error("AI 未能识别到有效内容。");
     
-    return JSON.parse(text.trim()) as AnalysisResponse;
+    // 过滤掉可能存在的 markdown 标签并解析
+    const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsedData = JSON.parse(cleanedText);
+    
+    if (!parsedData.ingredients || parsedData.ingredients.length === 0) {
+      throw new Error("未能识别到清晰的食材，请调整角度重拍。");
+    }
+
+    return parsedData as AnalysisResponse;
   } catch (error: any) {
-    console.error("Gemini Speed Mode Error:", error);
-    throw new Error("识别失败，请检查图片并重试。");
+    console.error("Gemini Vision Error:", error);
+    if (error instanceof SyntaxError) throw new Error("识别结果解析失败，请重试。");
+    throw error;
   }
 };
